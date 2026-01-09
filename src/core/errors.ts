@@ -28,6 +28,7 @@ export type PaymentErrorCode =
   | 'RATE_LIMIT'
   | 'SERVER_ERROR'
   | 'TIMEOUT'
+  | 'INVALID_CONFIG'
   | 'UNKNOWN';
 
 /**

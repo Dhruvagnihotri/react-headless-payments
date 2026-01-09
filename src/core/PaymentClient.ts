@@ -189,14 +189,50 @@ export class PaymentClient {
   }
 
   /**
+   * Resolve URL to absolute format
+   * Handles both relative paths and absolute URLs
+   */
+  private resolveUrl(url?: string): string | undefined {
+    if (!url) return undefined;
+    
+    // If already absolute URL, return as-is
+    if (url.startsWith('http://') || url.startsWith('https://')) {
+      return url;
+    }
+    
+    // If relative path, convert to absolute using window.location.origin
+    // Ensure path starts with /
+    const path = url.startsWith('/') ? url : `/${url}`;
+    return `${window.location.origin}${path}`;
+  }
+
+  /**
    * Create checkout session
    */
   async createCheckoutSession(data: CheckoutRequest): Promise<CheckoutResponse> {
+    // Resolve URLs: prioritize data URLs, fallback to config, then resolve to absolute
+    const successUrl = this.resolveUrl(data.success_url || this.config.successUrl);
+    const cancelUrl = this.resolveUrl(data.cancel_url || this.config.cancelUrl);
+
+    if (!successUrl || !cancelUrl) {
+      throw new PaymentError(
+        'INVALID_CONFIG',
+        'success_url and cancel_url are required for checkout'
+      );
+    }
+
     const requestData = {
       ...data,
-      success_url: data.success_url || `${window.location.origin}${this.config.successUrl}`,
-      cancel_url: data.cancel_url || `${window.location.origin}${this.config.cancelUrl}`,
+      success_url: successUrl,
+      cancel_url: cancelUrl,
     };
+
+    if (this.config.debug) {
+      console.log('[PaymentClient] Checkout URLs:', {
+        success_url: successUrl,
+        cancel_url: cancelUrl,
+      });
+    }
 
     return this.request<CheckoutResponse>(this.endpoints.checkout, {
       method: 'POST',

@@ -139,6 +139,8 @@ export const PaymentProvider: React.FC<PaymentProviderProps> = ({
         const response = await client.createCheckoutSession({
           plan,
           trial_days: trialDays,
+          success_url: userConfig?.successUrl,
+          cancel_url: userConfig?.cancelUrl,
         });
 
         if (response.url) {
@@ -155,7 +157,7 @@ export const PaymentProvider: React.FC<PaymentProviderProps> = ({
         throw error;
       }
     },
-    [client, onCheckoutSuccess, onCheckoutError]
+    [client, onCheckoutSuccess, onCheckoutError, userConfig]
   );
 
   /**

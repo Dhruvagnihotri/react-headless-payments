@@ -1,6 +1,6 @@
 {
   "name": "@headlesskits/react-headless-payments",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Production-ready, headless payment integration for React. Stripe subscriptions made simple. Pairs with flask-headless-payments backend.",
   "main": "./dist/index.js",
   "module": "./dist/index.mjs",
