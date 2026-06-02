@@ -19,6 +19,12 @@ export interface PaymentContextValue {
   upgradeSubscription: (newPlan: string) => Promise<void>;
   refreshSubscription: () => Promise<void>;
   refreshPlans: () => Promise<void>;
+  /**
+   * Clear in-memory subscription state. Intended to be called from the
+   * host app's logout hook so the next user (or anonymous session)
+   * doesn't briefly see the previous user's plan/trial state.
+   */
+  clearSubscription: () => void;
   
   // Utilities
   formatCurrency: (amount: number, currency?: string) => string;

@@ -3,7 +3,7 @@
  * Extracted and refined from brakit-web and pdfwhiz_frontend
  */
 
-import React, { useState, useEffect, useCallback, useMemo, ReactNode } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef, ReactNode } from 'react';
 import { PaymentContext } from './PaymentContext';
 import { PaymentClient } from '../core/PaymentClient';
 import type { PaymentConfig, Plan, Subscription } from '../core/types';
@@ -52,6 +52,13 @@ export const PaymentProvider: React.FC<PaymentProviderProps> = ({
   const [subscription, setSubscription] = useState<Subscription | null>(null);
   const [subscriptionLoading, setSubscriptionLoading] = useState(true);
 
+  // Generation counter for refresh requests. clearSubscription bumps it,
+  // and any in-flight refreshSubscription that resolves with a stale
+  // generation discards its result. Without this, a logout that fires
+  // mid-refresh would have its cleared state immediately overwritten by
+  // the resolving promise.
+  const refreshGenerationRef = useRef(0);
+
   /**
    * Fetch plans
    */
@@ -83,12 +90,19 @@ export const PaymentProvider: React.FC<PaymentProviderProps> = ({
       }
     }
 
+    // Snapshot the generation at the start of this call. clearSubscription
+    // bumps the generation; if it resolves "behind" a clear, we discard
+    // the result so the cleared state isn't resurrected.
+    const myGeneration = refreshGenerationRef.current;
+
     try {
       setSubscriptionLoading(true);
       const sub = await client.getSubscription();
+      if (myGeneration !== refreshGenerationRef.current) return;
       setSubscription(sub);
       onSubscriptionChange?.(sub);
     } catch (error) {
+      if (myGeneration !== refreshGenerationRef.current) return;
       // Handle 401 gracefully - user not authenticated or token expired
       if (error instanceof Error && error.message.includes('401')) {
         console.log('[PaymentProvider] User not authenticated, skipping subscription fetch');
@@ -98,7 +112,9 @@ export const PaymentProvider: React.FC<PaymentProviderProps> = ({
         setSubscription(null);
       }
     } finally {
-      setSubscriptionLoading(false);
+      if (myGeneration === refreshGenerationRef.current) {
+        setSubscriptionLoading(false);
+      }
     }
   }, [client, onSubscriptionChange, authTokenGetter]);
 
@@ -206,6 +222,72 @@ export const PaymentProvider: React.FC<PaymentProviderProps> = ({
   );
 
   /**
+   * Clear in-memory subscription state.
+   *
+   * Two callers expected:
+   *   1. The auth-token watcher below, which fires when the host app
+   *      logs the user out (token getter starts returning null).
+   *   2. The host app directly via the context, for cases where the
+   *      app wants to wipe state without changing the token (e.g. user
+   *      switching).
+   *
+   * We deliberately do NOT clear `plans` — plans are public data and
+   * caching them across sessions is fine and cuts a network round-trip
+   * on the next login.
+   */
+  const clearSubscription = useCallback(() => {
+    // Bump the generation FIRST so any in-flight refreshSubscription
+    // that resolves after this call discards its result instead of
+    // resurrecting the just-cleared state.
+    refreshGenerationRef.current += 1;
+    setSubscription(null);
+    setSubscriptionLoading(false);
+    onSubscriptionChange?.(null);
+  }, [onSubscriptionChange]);
+
+  /**
+   * Watch for logout: when the auth token transitions from present →
+   * absent, drop the in-memory subscription so it doesn't leak into
+   * the next session.
+   *
+   * We poll-on-render via the same authTokenGetter the rest of the
+   * provider already uses; a useRef guards us from re-firing the
+   * clear when the token simply hasn't changed across renders.
+   *
+   * If `authTokenGetter` itself swaps identity (host app re-mounts,
+   * new auth provider, user-switch), reset the baseline. Without
+   * this, a user-switch where the new getter immediately reads a
+   * fresh token would skip the clear (we'd see present→present) and
+   * the previous user's subscription would leak into the new session.
+   */
+  const lastTokenPresentRef = useRef<boolean | null>(null);
+  const lastGetterRef = useRef<typeof authTokenGetter | null>(null);
+  useEffect(() => {
+    if (!authTokenGetter) {
+      lastTokenPresentRef.current = null;
+      lastGetterRef.current = null;
+      return;
+    }
+    if (lastGetterRef.current !== authTokenGetter) {
+      // Getter swapped — clear stale subscription state proactively
+      // and re-baseline. The new getter's first read becomes the new
+      // truth; we don't try to compare across getter identities.
+      if (lastGetterRef.current !== null) {
+        clearSubscription();
+      }
+      lastGetterRef.current = authTokenGetter;
+      lastTokenPresentRef.current = !!authTokenGetter();
+      return;
+    }
+    const present = !!authTokenGetter();
+    const wasPresent = lastTokenPresentRef.current;
+    lastTokenPresentRef.current = present;
+    if (wasPresent === true && !present) {
+      clearSubscription();
+    }
+  });
+
+  /**
    * Format currency
    */
   const formatCurrency = useCallback(
@@ -271,6 +353,7 @@ export const PaymentProvider: React.FC<PaymentProviderProps> = ({
     upgradeSubscription,
     refreshSubscription,
     refreshPlans,
+    clearSubscription,
     formatCurrency,
     hasSubscription,
     isOnTrial,
