@@ -161,10 +161,17 @@ export const PaymentProvider: React.FC<PaymentProviderProps> = ({
 
         if (response.url) {
           onCheckoutSuccess?.(response.url);
-          
-          // Redirect to Stripe Checkout
+
+          // Redirect to Stripe Checkout. Setting `window.location.href`
+          // schedules the navigation but does not block JS — if we let
+          // this promise resolve, callers' `finally { setLoading(false) }`
+          // re-renders the button to its original state for the 1 frame
+          // before the browser unloads the page, causing a visible flash.
+          // Returning an unresolvable promise pins loading state through
+          // the navigation.
           if (typeof window !== 'undefined') {
             window.location.href = response.url;
+            await new Promise<never>(() => {});
           }
         }
       } catch (error: any) {
@@ -185,6 +192,10 @@ export const PaymentProvider: React.FC<PaymentProviderProps> = ({
       
       if (response.url && typeof window !== 'undefined') {
         window.location.href = response.url;
+        // Same anti-flash pattern as createCheckout — keep the promise
+        // pending so callers' `finally` blocks don't reset loading state
+        // for a frame before the browser navigates.
+        await new Promise<never>(() => {});
       }
     } catch (error) {
       console.error('[PaymentProvider] Failed to open portal:', error);
